@@ -1,5 +1,5 @@
 # Screenshot
-![](https://github.com/idovelemon/UnityProj/raw/master/IrradianceEnvironmentMap/1.jpg)
+![](https://github.com/idovelemon/UnityProj/blob/master/IrradianceEnvironmentMap/1.png)
 
 # Diffuse Irradiance Environment Map
 Using Bruteforce and Spherical Harmonic method to prefilter environment map and return the Diffuse Irradiance Environment Map.
