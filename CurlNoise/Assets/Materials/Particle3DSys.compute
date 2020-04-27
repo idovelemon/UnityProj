@@ -1,0 +1,160 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#pragma enable_d3d11_debug_symbols
+
+RWStructuredBuffer<float3> Result;
+
+float3 FixedVel;
+float ParticleSize;
+float ParticleZoneSize;
+float ParticleBornZoneSize;
+float CurlMount;
+float Time;
+float NoiseScale;
+
+// Gradients
+static const float3 Gradients[12] = {
+    float3(1, 1, 0), float3(-1, 1, 0), float3(1, -1, 0), float3(-1, -1, 0),
+    float3(1, 0, 1), float3(-1, 0, 1), float3(1, 0, -1), float3(-1, 0, -1),
+    float3(0, 1, 1), float3(0, -1, 1), float3(0, 1, -1), float3(0, -1, -1)
+};
+
+// Trilinear interpolating method
+float3 quintic(float3 x) {
+    return x * x * x * (x * (x * 6.0 - 15.0) + 10.0);
+}
+
+// Hash Function from https://www.shadertoy.com/view/4djSRW
+float hash(float3 v) {
+    float HASHSCALE = 0.1031;
+    v = frac(v * HASHSCALE);
+    v += dot(v, v.yzx + 19.19);
+    return frac((v.x + v.y) * v.z);
+}
+
+// 3D Perlin noise <optimization way>
+float noise01(float x, float y, float z) {
+    float3 p = floor(float3(x, y, z));
+    float3 t = float3(x, y, z) - p;
+    float3 f = quintic(t);
+
+    float3 v0 = p + float3(0.0, 0.0, 0.0);
+    float3 v1 = p + float3(1.0, 0.0, 0.0);
+    float3 v2 = p + float3(0.0, 1.0, 0.0);
+    float3 v3 = p + float3(1.0, 1.0, 0.0);
+    float3 v4 = v0 + float3(0.0, 0.0, 1.0);
+    float3 v5 = v1 + float3(0.0, 0.0, 1.0);
+    float3 v6 = v2 + float3(0.0, 0.0, 1.0);
+    float3 v7 = v3 + float3(0.0, 0.0, 1.0);
+
+    int g0Index = int(hash(v0) * 12.0);
+    int g1Index = int(hash(v1) * 12.0);
+    int g2Index = int(hash(v2) * 12.0);
+    int g3Index = int(hash(v3) * 12.0);
+    int g4Index = int(hash(v4) * 12.0);
+    int g5Index = int(hash(v5) * 12.0);
+    int g6Index = int(hash(v6) * 12.0);
+    int g7Index = int(hash(v7) * 12.0);
+    float3 g0 = Gradients[g0Index];
+    float3 g1 = Gradients[g1Index];
+    float3 g2 = Gradients[g2Index];
+    float3 g3 = Gradients[g3Index];
+    float3 g4 = Gradients[g4Index];
+    float3 g5 = Gradients[g5Index];
+    float3 g6 = Gradients[g6Index];
+    float3 g7 = Gradients[g7Index];
+
+    return lerp(
+        lerp(
+            lerp(dot(g0, t - float3(0.0, 0.0, 0.0)), dot(g1, t - float3(1.0, 0.0, 0.0)), f.x),
+            lerp(dot(g2, t - float3(0.0, 1.0, 0.0)), dot(g3, t - float3(1.0, 1.0, 0.0)), f.x),
+            f.y
+        ),
+        lerp(
+            lerp(dot(g4, t - float3(0.0, 0.0, 1.0)), dot(g5, t - float3(1.0, 0.0, 1.0)), f.x),
+            lerp(dot(g6, t - float3(0.0, 1.0, 1.0)), dot(g7, t - float3(1.0, 1.0, 1.0)), f.x),
+            f.y
+        ),
+        f.z
+    );
+}
+
+// Fratical Browian Motion
+float fBm(int octaves, float x, float y, float z) {
+    float amplitude = 1.0;
+    float frequency = 1.0;
+    float result = 0.0;
+    float totalAmplitude = 0.0;
+
+    for (int i = 0; i < octaves; i++) {
+        float3 pos = frequency * float3(x, y, z);
+        result = result + amplitude * noise01(pos.x, pos.y, pos.z);
+
+        totalAmplitude = totalAmplitude + amplitude;
+        amplitude = amplitude / 2.0;
+        frequency = frequency * 2.0;
+    }
+
+    result = result / totalAmplitude;
+    return result;
+}
+
+[numthreads(16, 8, 8)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    float halfZone = ParticleZoneSize / 2.0f;
+
+    // Save old position
+    float3 oldPos = Result[id.z * ParticleSize * ParticleSize + id.y * ParticleSize + id.x];
+
+    // Get noise value
+    float eps = 0.0001f;
+    float3 uvy = (oldPos + float3(halfZone, halfZone, halfZone)) / ParticleZoneSize;
+    uvy = uvy * NoiseScale;
+
+    float3 curl = float3(0.0f, 0.0f, 0.0f);
+    float n = 0.0f, a = 0.0f, b = 0.0f;
+    float o = fBm(4, uvy.x, uvy.y, uvy.z);
+
+    n = fBm(4, uvy.x, uvy.y - eps, uvy.z);
+    a = (o - n) / eps;
+
+    n = fBm(4, uvy.x, uvy.y, uvy.z - eps);
+    b = (o - n) / eps;
+
+    curl.x = a - b;
+
+    n = fBm(4, uvy.x, uvy.y, uvy.z - eps);
+    a = (o - n) / eps;
+
+    n = fBm(4, uvy.x - eps, uvy.y, uvy.z);
+    b = (o - n) / eps;
+
+    curl.y = a - b;
+
+    n = fBm(4, uvy.x - eps, uvy.y, uvy.z);
+    a = (o - n) / eps;
+
+    n = fBm(4, uvy.x, uvy.y - eps, uvy.z);
+    b = (o - n) / eps;
+
+    curl.z = a - b;
+
+    // Simulation
+    float3 dt = (FixedVel + curl * CurlMount) * Time;
+    float3 newPos = oldPos + dt;
+
+    // Bound
+    if (newPos.x <= -halfZone || newPos.x >= halfZone
+        || newPos.y <= -halfZone || newPos.y >= halfZone
+        || newPos.z <= -halfZone || newPos.z >= halfZone)
+    {
+        float step = ParticleBornZoneSize / ParticleSize;
+        newPos.x = -ParticleBornZoneSize / 2.0f + id.x * step;
+        newPos.y = -ParticleBornZoneSize / 2.0f + id.y * step;
+        newPos.z = -ParticleBornZoneSize / 2.0f + id.z * step;
+    }
+
+    // Update
+    Result[id.z * ParticleSize * ParticleSize + id.y * ParticleSize + id.x] = newPos;
+}
