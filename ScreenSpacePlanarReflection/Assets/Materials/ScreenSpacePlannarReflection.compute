@@ -1,0 +1,119 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma enable_d3d11_debug_symbols
+#pragma kernel SSPRClear_Main
+#pragma kernel SSPRHash_Main
+#pragma kernel SSPRResolve_Main
+
+//-----------------------------------------------------------------
+float4x4 VPMatrix;
+float4x4 InvVPMatrix;
+uint Width;
+uint Height;
+uint ReflectWidth;
+uint ReflectHeight;
+
+//--------------------------------------------------------------------
+RWTexture2D<int> ClearHashTexture;
+
+[numthreads(8, 8, 1)]
+void SSPRClear_Main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < ReflectWidth && id.y < ReflectHeight)
+    {
+        ClearHashTexture[id.xy] = 0x0FFFFFFF;
+    }
+}
+
+//---------------------------------------------------------------
+Texture2D<float> DepthTex;
+RWTexture2D<int> HashResult;
+
+#define DownSampleFactor (1)
+
+float3 Unproject(float3 clip)
+{
+    float4 clipW = float4(clip, 1.0f);
+    clipW = mul(InvVPMatrix, clipW);
+    clipW.xyz = clipW.xyz / clipW.w;
+    return clipW.xyz;
+}
+
+float2 Project(float3 world)
+{
+    float4 worldW = float4(world, 1.0f);
+    worldW = mul(VPMatrix, worldW);
+    worldW.xy = worldW.xy / worldW.w;
+    worldW.xy = (worldW.xy + float2(1.0f, 1.0f)) / 2.0f;
+    return worldW.xy;
+}
+
+[numthreads(8, 8, 1)]
+void SSPRHash_Main(uint3 id : SV_DispatchThreadID)
+{
+    for (uint i = 0; i < DownSampleFactor; i++)
+    {
+        for (uint j = 0; j < DownSampleFactor; j++)
+        {
+            uint2 DepthPos = uint2(id.x * DownSampleFactor + i, id.y * DownSampleFactor + j);
+            if (DepthPos.x < Width && DepthPos.y < Height)
+            {
+                float depth = DepthTex.Load(int3(DepthPos.x, DepthPos.y, 0)).x;
+
+                if (depth > 0.0f)
+                {
+                    float2 uv = (DepthPos.xy * 1.0f) / float2(Width, Height);
+                    uv = uv * 2.0f - float2(1.0f, 1.0f);
+                    uv.y = -uv.y;
+
+                    float3 PosWS = Unproject(float3(uv, depth));
+
+                    if (PosWS.y > 0.0f)
+                    {
+                        float3 ReflPosWS = float3(PosWS.x, -PosWS.y, PosWS.z);
+                        float2 ReflPosUV = Project(ReflPosWS);
+
+                        uint2 SrcPosPixel = uint2(DepthPos.x, DepthPos.y);
+                        uint2 ReflPosPixel = ReflPosUV * uint2(ReflectWidth, ReflectHeight);
+
+                        int Hash = SrcPosPixel.y << 16 | SrcPosPixel.x;
+                        int dotCare = 0;
+                        InterlockedMin(HashResult[ReflPosPixel], Hash, dotCare);
+                    }
+                }
+            }
+        }
+    }
+}
+
+//------------------------------------------------------------------------------
+Texture2D<int> HashTexture;
+Texture2D<float4> ColorTexture;
+RWTexture2D<float4> ReflectionTexture;
+
+[numthreads(8, 8, 1)]
+void SSPRResolve_Main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < ReflectWidth && id.y < ReflectHeight)
+    {
+        uint Hash = HashTexture[id.xy].x;
+        if (Hash == 0x0FFFFFFF)
+            Hash = HashTexture[uint2(id.x, id.y + 1)].x;
+        if (Hash == 0x0FFFFFFF)
+            Hash = HashTexture[uint2(id.x, id.y - 1)].x;
+        if (Hash == 0x0FFFFFFF)
+            Hash = HashTexture[uint2(id.x + 1, id.y)].x;
+        if (Hash == 0x0FFFFFFF)
+            Hash = HashTexture[uint2(id.x - 1, id.y)].x;
+
+        if (Hash != 0x0FFFFFFF)
+        {
+            uint x = Hash & 0xFFFF;
+            uint y = Hash >> 16;
+            ReflectionTexture[id.xy] = ColorTexture[uint2(x, y)];
+        }
+        else
+        {
+            ReflectionTexture[id.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        }
+    }
+}
