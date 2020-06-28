@@ -4,7 +4,7 @@
 # ScreenSpacePlanarReflection
 Using a specific SSR method to implement fast planar reflection.
 
-More info:[Here](https://www.cnblogs.com/idovelemon/p/12150757.html)
+More info:[Here](https://www.cnblogs.com/idovelemon/p/13184970.html)
 
 # Tool
 Unity 2019.3.2f1
