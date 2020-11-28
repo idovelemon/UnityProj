@@ -1,5 +1,5 @@
 # Screenshot
-![](https://github.com/idovelemon/UnityProj/blob/master/CurlNoise/1.png)
+![](https://github.com/idovelemon/UnityProj/blob/master/AtmosphericScattering/1.png)
 
 # AtmosphericScattering
 Simple and brute force way to implement a single scattering atmosphericscattering demo.
